@@ -147,7 +147,7 @@ class DependencyScanner:
         self._security_use_available = False
         try:
             from security_use import scan_dependencies as _scan_deps
-            from security_use import get_vulnerability_fix as _get_fix
+            from security_use.scanner import get_vulnerability_fix as _get_fix
 
             self._scan_deps = _scan_deps
             self._get_fix = _get_fix
@@ -158,23 +158,53 @@ class DependencyScanner:
             self._scan_deps = None
             self._get_fix = None
 
+    def _get_file_type(self, uri: str) -> str:
+        """Determine file type from URI."""
+        uri_lower = uri.lower()
+        if "requirements" in uri_lower or uri_lower.endswith(".txt"):
+            return "requirements.txt"
+        elif "pyproject" in uri_lower:
+            return "pyproject.toml"
+        elif "pipfile.lock" in uri_lower:
+            return "Pipfile.lock"
+        elif "pipfile" in uri_lower:
+            return "Pipfile"
+        elif "poetry.lock" in uri_lower:
+            return "poetry.lock"
+        elif "package-lock" in uri_lower:
+            return "package-lock.json"
+        elif "package.json" in uri_lower:
+            return "package.json"
+        elif "go.mod" in uri_lower:
+            return "go.mod"
+        elif "cargo.toml" in uri_lower:
+            return "Cargo.toml"
+        elif "gemfile.lock" in uri_lower:
+            return "Gemfile.lock"
+        elif "gemfile" in uri_lower:
+            return "Gemfile"
+        elif "pom.xml" in uri_lower:
+            return "pom.xml"
+        return "requirements.txt"
+
     def scan(self, uri: str, content: str) -> list[DependencyVulnerability]:
         """Scan content for dependency vulnerabilities."""
         if self._security_use_available and self._scan_deps:
             try:
-                results = self._scan_deps(content, file_path=uri)
+                file_type = self._get_file_type(uri)
+                result = self._scan_deps(file_content=content, file_type=file_type)
                 return [
                     DependencyVulnerability(
-                        vulnerability_id=r.get("id", ""),
-                        package_name=r.get("package", ""),
-                        installed_version=r.get("version", ""),
-                        severity=r.get("severity", "UNKNOWN"),
-                        description=r.get("description", ""),
-                        cve_id=r.get("cve_id"),
-                        fix_version=r.get("fix_version"),
-                        reference_url=r.get("reference_url"),
+                        vulnerability_id=v.id,
+                        package_name=v.package,
+                        installed_version=v.installed_version,
+                        severity=v.severity.value if hasattr(v.severity, 'value') else str(v.severity),
+                        description=v.description,
+                        cve_id=v.id if v.id.startswith("CVE-") else None,
+                        fix_version=v.fixed_version,
+                        reference_url=v.references[0] if v.references else None,
                     )
-                    for r in results
+                    for v in result.vulnerabilities
                 ]
             except Exception as e:
                 logger.error(f"Error scanning dependencies: {e}")
@@ -236,36 +266,45 @@ class IaCScanner:
         self._security_use_available = False
         try:
             from security_use import scan_iac as _scan_iac
-            from security_use import get_iac_fix as _get_iac_fix
 
             self._scan_iac = _scan_iac
-            self._get_iac_fix = _get_iac_fix
             self._security_use_available = True
             logger.info("security-use IaC scanner loaded successfully")
         except ImportError:
             logger.warning("security-use IaC scanner not available, using stub scanner")
             self._scan_iac = None
-            self._get_iac_fix = None
+
+    def _get_file_type(self, uri: str) -> str:
+        """Determine file type from URI."""
+        uri_lower = uri.lower()
+        if uri_lower.endswith(".tf"):
+            return "terraform"
+        elif uri_lower.endswith((".yaml", ".yml")):
+            return "cloudformation"
+        elif uri_lower.endswith(".json"):
+            return "cloudformation"
+        return "terraform"
 
     def scan(self, uri: str, content: str) -> list[IaCVulnerability]:
         """Scan content for IaC vulnerabilities."""
         if self._security_use_available and self._scan_iac:
             try:
-                results = self._scan_iac(content, file_path=uri)
+                file_type = self._get_file_type(uri)
+                result = self._scan_iac(file_content=content, file_type=file_type)
                 return [
                     IaCVulnerability(
-                        rule_id=r.get("rule_id", ""),
-                        title=r.get("title", ""),
-                        severity=r.get("severity", "UNKNOWN"),
-                        resource_type=r.get("resource_type", ""),
-                        resource_path=r.get("resource_path", ""),
-                        description=r.get("description", ""),
-                        remediation=r.get("remediation", ""),
-                        line_number=r.get("line_number"),
-                        fix_code=r.get("fix_code"),
-                        reference_url=r.get("reference_url"),
+                        rule_id=f.rule_id,
+                        title=f.title,
+                        severity=f.severity.value if hasattr(f.severity, 'value') else str(f.severity),
+                        resource_type=f.resource_type,
+                        resource_path=f"{f.resource_type}.{f.resource_name}",
+                        description=f.description,
+                        remediation=f.remediation,
+                        line_number=f.line_number,
+                        fix_code=f.fix_code,
+                        reference_url=None,
                     )
-                    for r in results
+                    for f in result.iac_findings
                 ]
             except Exception as e:
                 logger.error(f"Error scanning IaC: {e}")
