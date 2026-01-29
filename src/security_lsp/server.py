@@ -64,6 +64,8 @@ class SecurityLanguageServer(LanguageServer):
         self.executor = ThreadPoolExecutor(max_workers=4)
         self._debounce_tasks: dict[str, asyncio.Task[None]] = {}
         self._scan_in_progress: dict[str, bool] = {}
+        # Store diagnostics per URI for hover lookups
+        self._diagnostics: dict[str, list[lsp.Diagnostic]] = {}
 
     def is_dependency_file(self, uri: str) -> bool:
         """Check if the file is a dependency manifest."""
@@ -165,6 +167,9 @@ def did_close(params: lsp.DidCloseTextDocumentParams) -> None:
     uri = params.text_document.uri
     logger.info(f"Document closed: {uri}")
     server.publish_diagnostics(uri, [])
+    # Clear stored diagnostics
+    if uri in server._diagnostics:
+        del server._diagnostics[uri]
     # Cancel any pending scans
     if uri in server._debounce_tasks:
         server._debounce_tasks[uri].cancel()
@@ -233,7 +238,8 @@ async def run_scan(uri: str, content: str) -> None:
                 message=f"Found {len(diagnostics)} issues",
             ))
 
-            # Publish diagnostics
+            # Store and publish diagnostics
+            server._diagnostics[uri] = diagnostics
             server.publish_diagnostics(uri, diagnostics)
             logger.info(f"Published {len(diagnostics)} diagnostics for {uri}")
 
@@ -292,16 +298,124 @@ def code_action_resolve(params: lsp.CodeAction) -> lsp.CodeAction:
 
 @server.feature(lsp.TEXT_DOCUMENT_HOVER)
 def hover(params: lsp.HoverParams) -> lsp.Hover | None:
-    """Provide hover information for diagnostics."""
+    """Provide hover information for vulnerabilities."""
     uri = params.text_document.uri
     position = params.position
 
-    doc = server.workspace.get_text_document(uri)
+    # Get diagnostics for this URI
+    diagnostics = server._diagnostics.get(uri, [])
 
-    # Find any diagnostic at this position
-    # This is a simplified implementation - in production you'd
-    # maintain a mapping of positions to diagnostic data
+    # Find diagnostic at this position
+    for diagnostic in diagnostics:
+        if _position_in_range(position, diagnostic.range):
+            hover_content = _create_hover_content(diagnostic)
+            if hover_content:
+                return lsp.Hover(
+                    contents=lsp.MarkupContent(
+                        kind=lsp.MarkupKind.Markdown,
+                        value=hover_content,
+                    ),
+                    range=diagnostic.range,
+                )
+
     return None
+
+
+def _position_in_range(position: lsp.Position, range: lsp.Range) -> bool:
+    """Check if a position is within a range."""
+    if position.line < range.start.line or position.line > range.end.line:
+        return False
+    if position.line == range.start.line and position.character < range.start.character:
+        return False
+    if position.line == range.end.line and position.character > range.end.character:
+        return False
+    return True
+
+
+def _create_hover_content(diagnostic: lsp.Diagnostic) -> str | None:
+    """Create markdown hover content for a diagnostic."""
+    data = diagnostic.data
+    if not isinstance(data, dict):
+        return None
+
+    vuln_type = data.get("type")
+    lines: list[str] = []
+
+    if vuln_type == "dependency":
+        # Dependency vulnerability hover
+        package_name = data.get("package_name", "Unknown")
+        installed_version = data.get("installed_version", "Unknown")
+        fix_version = data.get("fix_version")
+        vuln_id = data.get("vulnerability_id", "")
+
+        # Get severity from diagnostic
+        severity_map = {
+            lsp.DiagnosticSeverity.Error: "Critical/High",
+            lsp.DiagnosticSeverity.Warning: "Medium",
+            lsp.DiagnosticSeverity.Information: "Low",
+            lsp.DiagnosticSeverity.Hint: "Unknown",
+        }
+        severity = severity_map.get(diagnostic.severity, "Unknown")
+
+        # Build hover content
+        code = diagnostic.code or vuln_id
+        lines.append(f"**{code}** ({severity})")
+        lines.append("")
+        lines.append(f"**Package:** {package_name}@{installed_version}")
+        lines.append("")
+
+        if fix_version:
+            lines.append(f"**Fix:** Upgrade to >= {fix_version}")
+            lines.append("")
+
+        # Add link to vulnerability database
+        if code:
+            if str(code).startswith("CVE-"):
+                lines.append(f"[View on NVD](https://nvd.nist.gov/vuln/detail/{code})")
+            elif str(code).startswith("GHSA-"):
+                lines.append(f"[View on GitHub Advisory](https://github.com/advisories/{code})")
+            else:
+                lines.append(f"[View on OSV](https://osv.dev/vulnerability/{code})")
+
+    elif vuln_type == "iac":
+        # IaC vulnerability hover
+        rule_id = data.get("rule_id", "Unknown")
+        resource_type = data.get("resource_type", "Unknown")
+        resource_path = data.get("resource_path", "")
+        fix_code = data.get("fix_code")
+
+        # Get severity from diagnostic
+        severity_map = {
+            lsp.DiagnosticSeverity.Error: "Critical/High",
+            lsp.DiagnosticSeverity.Warning: "Medium",
+            lsp.DiagnosticSeverity.Information: "Low",
+            lsp.DiagnosticSeverity.Hint: "Unknown",
+        }
+        severity = severity_map.get(diagnostic.severity, "Unknown")
+
+        # Build hover content
+        lines.append(f"**{rule_id}** ({severity})")
+        lines.append("")
+        lines.append(f"**Resource:** {resource_type}")
+        if resource_path:
+            lines.append(f"**Path:** {resource_path}")
+        lines.append("")
+
+        if fix_code:
+            lines.append("**Suggested fix:**")
+            lines.append(f"```")
+            lines.append(fix_code)
+            lines.append("```")
+            lines.append("")
+
+        # Add link to documentation
+        if rule_id.startswith("CKV_"):
+            lines.append(f"[View on Checkov](https://www.checkov.io/5.Policy%20Index/{rule_id}.html)")
+
+    else:
+        return None
+
+    return "\n".join(lines)
 
 
 def main() -> None:
