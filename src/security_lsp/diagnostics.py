@@ -118,6 +118,9 @@ def create_dependency_diagnostics(
 
         message = " | ".join(message_parts)
 
+        # Create related information with links
+        related_info = _create_dependency_related_info(vuln)
+
         # Create diagnostic with code linking to CVE
         diagnostic = lsp.Diagnostic(
             range=lsp.Range(
@@ -132,6 +135,7 @@ def create_dependency_diagnostics(
                 href=vuln.reference_url or f"https://osv.dev/vulnerability/{vuln.vulnerability_id}"
             ) if vuln.cve_id or vuln.vulnerability_id else None,
             tags=[lsp.DiagnosticTag.Deprecated] if vuln.severity.upper() == "CRITICAL" else None,
+            related_information=related_info if related_info else None,
             data={
                 "type": "dependency",
                 "package_name": vuln.package_name,
@@ -144,6 +148,74 @@ def create_dependency_diagnostics(
         diagnostics.append(diagnostic)
 
     return diagnostics
+
+
+def _create_dependency_related_info(
+    vuln: DependencyVulnerability,
+) -> list[lsp.DiagnosticRelatedInformation]:
+    """Create related information links for a dependency vulnerability."""
+    related: list[lsp.DiagnosticRelatedInformation] = []
+
+    vuln_id = vuln.cve_id or vuln.vulnerability_id
+
+    # Link to vulnerability details
+    if vuln_id:
+        if vuln_id.startswith("CVE-"):
+            url = f"https://nvd.nist.gov/vuln/detail/{vuln_id}"
+            message = f"View {vuln_id} on NVD"
+        elif vuln_id.startswith("GHSA-"):
+            url = f"https://github.com/advisories/{vuln_id}"
+            message = f"View {vuln_id} on GitHub Advisory"
+        else:
+            url = f"https://osv.dev/vulnerability/{vuln_id}"
+            message = f"View {vuln_id} on OSV"
+
+        related.append(
+            lsp.DiagnosticRelatedInformation(
+                location=lsp.Location(
+                    uri=url,
+                    range=lsp.Range(
+                        start=lsp.Position(line=0, character=0),
+                        end=lsp.Position(line=0, character=0),
+                    ),
+                ),
+                message=message,
+            )
+        )
+
+    # Link to fix documentation if available
+    if vuln.fix_version:
+        # Link to package changelog (PyPI for Python packages)
+        changelog_url = f"https://pypi.org/project/{vuln.package_name}/{vuln.fix_version}/"
+        related.append(
+            lsp.DiagnosticRelatedInformation(
+                location=lsp.Location(
+                    uri=changelog_url,
+                    range=lsp.Range(
+                        start=lsp.Position(line=0, character=0),
+                        end=lsp.Position(line=0, character=0),
+                    ),
+                ),
+                message=f"View {vuln.package_name} {vuln.fix_version} on PyPI",
+            )
+        )
+
+    # Link to reference URL if different
+    if vuln.reference_url and vuln.reference_url not in [r.location.uri for r in related]:
+        related.append(
+            lsp.DiagnosticRelatedInformation(
+                location=lsp.Location(
+                    uri=vuln.reference_url,
+                    range=lsp.Range(
+                        start=lsp.Position(line=0, character=0),
+                        end=lsp.Position(line=0, character=0),
+                    ),
+                ),
+                message="View additional vulnerability details",
+            )
+        )
+
+    return related
 
 
 def create_iac_diagnostics(
@@ -169,6 +241,9 @@ def create_iac_diagnostics(
 
         message = " | ".join(message_parts)
 
+        # Create related information with links
+        related_info = _create_iac_related_info(vuln)
+
         diagnostic = lsp.Diagnostic(
             range=lsp.Range(
                 start=lsp.Position(line=start_line, character=start_char),
@@ -181,6 +256,7 @@ def create_iac_diagnostics(
             code_description=lsp.CodeDescription(
                 href=vuln.reference_url or f"https://www.checkov.io/5.Policy%20Index/{vuln.rule_id}.html"
             ) if vuln.rule_id else None,
+            related_information=related_info if related_info else None,
             data={
                 "type": "iac",
                 "rule_id": vuln.rule_id,
@@ -193,3 +269,84 @@ def create_iac_diagnostics(
         diagnostics.append(diagnostic)
 
     return diagnostics
+
+
+def _create_iac_related_info(
+    vuln: IaCVulnerability,
+) -> list[lsp.DiagnosticRelatedInformation]:
+    """Create related information links for an IaC vulnerability."""
+    related: list[lsp.DiagnosticRelatedInformation] = []
+
+    # Link to Checkov documentation
+    if vuln.rule_id:
+        if vuln.rule_id.startswith("CKV_"):
+            checkov_url = f"https://www.checkov.io/5.Policy%20Index/{vuln.rule_id}.html"
+            related.append(
+                lsp.DiagnosticRelatedInformation(
+                    location=lsp.Location(
+                        uri=checkov_url,
+                        range=lsp.Range(
+                            start=lsp.Position(line=0, character=0),
+                            end=lsp.Position(line=0, character=0),
+                        ),
+                    ),
+                    message=f"View {vuln.rule_id} documentation on Checkov",
+                )
+            )
+
+    # Link to AWS/cloud provider documentation for specific resource types
+    resource_docs = _get_resource_type_docs(vuln.resource_type)
+    if resource_docs:
+        related.append(
+            lsp.DiagnosticRelatedInformation(
+                location=lsp.Location(
+                    uri=resource_docs,
+                    range=lsp.Range(
+                        start=lsp.Position(line=0, character=0),
+                        end=lsp.Position(line=0, character=0),
+                    ),
+                ),
+                message=f"View {vuln.resource_type} documentation",
+            )
+        )
+
+    # Link to reference URL if available
+    if vuln.reference_url:
+        related.append(
+            lsp.DiagnosticRelatedInformation(
+                location=lsp.Location(
+                    uri=vuln.reference_url,
+                    range=lsp.Range(
+                        start=lsp.Position(line=0, character=0),
+                        end=lsp.Position(line=0, character=0),
+                    ),
+                ),
+                message="View additional security guidance",
+            )
+        )
+
+    return related
+
+
+def _get_resource_type_docs(resource_type: str) -> str | None:
+    """Get documentation URL for a resource type."""
+    # Terraform AWS resources
+    aws_resource_docs = {
+        "aws_s3_bucket": "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket",
+        "aws_security_group": "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/security_group",
+        "aws_iam_role": "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role",
+        "aws_iam_policy": "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy",
+        "aws_kms_key": "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/kms_key",
+        "aws_rds_instance": "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/db_instance",
+        "aws_lambda_function": "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_function",
+        "aws_ec2_instance": "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/instance",
+    }
+
+    # CloudFormation resources
+    cfn_resource_docs = {
+        "AWS::S3::Bucket": "https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-s3-bucket.html",
+        "AWS::IAM::Role": "https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-iam-role.html",
+        "AWS::EC2::SecurityGroup": "https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-ec2-security-group.html",
+    }
+
+    return aws_resource_docs.get(resource_type) or cfn_resource_docs.get(resource_type)

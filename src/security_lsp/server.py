@@ -129,7 +129,11 @@ def initialize(params: lsp.InitializeParams) -> lsp.InitializeResult:
                     "security-lsp.ignoreInline",
                     "security-lsp.ignoreConfig",
                     "security-lsp.reloadIgnoreConfig",
+                    "security-lsp.scanFile",
                 ]
+            ),
+            code_lens_provider=lsp.CodeLensOptions(
+                resolve_provider=True,
             ),
         ),
         server_info=lsp.ServerInfo(
@@ -366,6 +370,102 @@ def code_action(params: lsp.CodeActionParams) -> list[lsp.CodeAction]:
 def code_action_resolve(params: lsp.CodeAction) -> lsp.CodeAction:
     """Resolve code action details."""
     return params
+
+
+@server.feature(lsp.TEXT_DOCUMENT_CODE_LENS)
+def code_lens(params: lsp.CodeLensParams) -> list[lsp.CodeLens]:
+    """Provide code lenses for vulnerability information."""
+    uri = params.text_document.uri
+    lenses: list[lsp.CodeLens] = []
+
+    # Only show code lens for supported file types
+    if not (server.is_dependency_file(uri) or server.is_iac_file(uri)):
+        return lenses
+
+    # Get diagnostics for this file
+    diagnostics = server._diagnostics.get(uri, [])
+
+    # Count vulnerabilities by severity
+    severity_counts: dict[str, int] = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    for diag in diagnostics:
+        if diag.severity == lsp.DiagnosticSeverity.Error:
+            severity_counts["critical"] += 1
+        elif diag.severity == lsp.DiagnosticSeverity.Warning:
+            severity_counts["medium"] += 1
+        elif diag.severity == lsp.DiagnosticSeverity.Information:
+            severity_counts["low"] += 1
+
+    total = len(diagnostics)
+
+    # Add summary lens at top of file
+    if total > 0:
+        summary_parts = []
+        if severity_counts["critical"] > 0:
+            summary_parts.append(f"{severity_counts['critical']} critical")
+        if severity_counts["high"] > 0:
+            summary_parts.append(f"{severity_counts['high']} high")
+        if severity_counts["medium"] > 0:
+            summary_parts.append(f"{severity_counts['medium']} medium")
+        if severity_counts["low"] > 0:
+            summary_parts.append(f"{severity_counts['low']} low")
+
+        title = f"Security: {total} vulnerabilities ({', '.join(summary_parts)})"
+    else:
+        title = "Security: No vulnerabilities found"
+
+    lenses.append(
+        lsp.CodeLens(
+            range=lsp.Range(
+                start=lsp.Position(line=0, character=0),
+                end=lsp.Position(line=0, character=0),
+            ),
+            command=lsp.Command(
+                title=title,
+                command="security-lsp.scanFile",
+                arguments=[uri],
+            ),
+        )
+    )
+
+    # Add "Scan now" lens
+    lenses.append(
+        lsp.CodeLens(
+            range=lsp.Range(
+                start=lsp.Position(line=0, character=0),
+                end=lsp.Position(line=0, character=0),
+            ),
+            command=lsp.Command(
+                title="Scan now",
+                command="security-lsp.scanFile",
+                arguments=[uri],
+            ),
+        )
+    )
+
+    return lenses
+
+
+@server.feature(lsp.CODE_LENS_RESOLVE)
+def code_lens_resolve(params: lsp.CodeLens) -> lsp.CodeLens:
+    """Resolve code lens details."""
+    return params
+
+
+@server.command("security-lsp.scanFile")
+async def scan_file_command(args: list[Any]) -> dict[str, Any]:
+    """Trigger a scan for a specific file."""
+    if not args:
+        return {"success": False, "error": "Missing file URI"}
+
+    uri = args[0]
+
+    try:
+        doc = server.workspace.get_text_document(uri)
+        await run_scan(uri, doc.source)
+        return {"success": True}
+    except Exception as e:
+        logger.exception(f"Error scanning file: {e}")
+        return {"success": False, "error": str(e)}
 
 
 @server.feature(lsp.TEXT_DOCUMENT_HOVER)
