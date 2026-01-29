@@ -39,6 +39,15 @@ def create_code_actions(
             if action:
                 actions.append(action)
 
+        # Add ignore actions for all vulnerability types
+        ignore_inline_action = create_ignore_inline_action(uri, diagnostic, data)
+        if ignore_inline_action:
+            actions.append(ignore_inline_action)
+
+        ignore_config_action = create_ignore_config_action(uri, diagnostic, data)
+        if ignore_config_action:
+            actions.append(ignore_config_action)
+
     return actions
 
 
@@ -126,20 +135,64 @@ def create_iac_fix_action(
     )
 
 
+def create_ignore_inline_action(
+    uri: str,
+    diagnostic: lsp.Diagnostic,
+    data: dict[str, Any],
+) -> lsp.CodeAction | None:
+    """Create a code action to add an inline ignore comment."""
+    code = diagnostic.code
+    if not code:
+        return None
+
+    return lsp.CodeAction(
+        title=f"Ignore {code} (inline comment)",
+        kind=lsp.CodeActionKind.QuickFix,
+        diagnostics=[diagnostic],
+        is_preferred=False,
+        command=lsp.Command(
+            title="Add inline ignore comment",
+            command="security-lsp.ignoreInline",
+            arguments=[uri, str(code), diagnostic.range.start.line],
+        ),
+    )
+
+
+def create_ignore_config_action(
+    uri: str,
+    diagnostic: lsp.Diagnostic,
+    data: dict[str, Any],
+) -> lsp.CodeAction | None:
+    """Create a code action to add to ignore config file."""
+    code = diagnostic.code
+    if not code:
+        return None
+
+    return lsp.CodeAction(
+        title=f"Ignore {code} (add to config)",
+        kind=lsp.CodeActionKind.QuickFix,
+        diagnostics=[diagnostic],
+        is_preferred=False,
+        command=lsp.Command(
+            title="Add to ignore config",
+            command="security-lsp.ignoreConfig",
+            arguments=[uri, str(code)],
+        ),
+    )
+
+
 def create_ignore_action(
     uri: str,
     diagnostic: lsp.Diagnostic,
     data: dict[str, Any],
 ) -> lsp.CodeAction:
-    """Create a code action to ignore/suppress a vulnerability."""
+    """Create a code action to ignore/suppress a vulnerability (legacy)."""
     vuln_type = data.get("type")
     code = diagnostic.code
 
     if vuln_type == "dependency":
-        # Add to .security-ignore or similar
         title = f"Ignore {code}"
     else:
-        # Add inline ignore comment
         title = f"Ignore {code} (add inline comment)"
 
     return lsp.CodeAction(

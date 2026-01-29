@@ -8,7 +8,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from lsprotocol import types as lsp
 from pygls.server import LanguageServer
@@ -19,6 +19,13 @@ from security_lsp.diagnostics import (
 )
 from security_lsp.code_actions import create_code_actions
 from security_lsp.scanner import SecurityScanner
+from security_lsp.ignore import (
+    IgnoreConfig,
+    load_ignore_config,
+    parse_inline_ignores,
+    create_inline_ignore_comment,
+    create_ignore_config_entry,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -66,6 +73,12 @@ class SecurityLanguageServer(LanguageServer):
         self._scan_in_progress: dict[str, bool] = {}
         # Store diagnostics per URI for hover lookups
         self._diagnostics: dict[str, list[lsp.Diagnostic]] = {}
+        # Ignore configuration
+        self._ignore_config: IgnoreConfig = IgnoreConfig()
+
+    def load_ignore_config(self) -> None:
+        """Load ignore configuration from workspace."""
+        self._ignore_config = load_ignore_config(self.workspace.root_uri)
 
     def is_dependency_file(self, uri: str) -> bool:
         """Check if the file is a dependency manifest."""
@@ -111,6 +124,13 @@ def initialize(params: lsp.InitializeParams) -> lsp.InitializeResult:
                 workspace_diagnostics=False,
             ),
             hover_provider=True,
+            execute_command_provider=lsp.ExecuteCommandOptions(
+                commands=[
+                    "security-lsp.ignoreInline",
+                    "security-lsp.ignoreConfig",
+                    "security-lsp.reloadIgnoreConfig",
+                ]
+            ),
         ),
         server_info=lsp.ServerInfo(
             name="security-lsp",
@@ -123,6 +143,8 @@ def initialize(params: lsp.InitializeParams) -> lsp.InitializeResult:
 def initialized(params: lsp.InitializedParams) -> None:
     """Handle LSP initialized notification."""
     logger.info("Server initialized successfully")
+    # Load ignore configuration
+    server.load_ignore_config()
     # Scan workspace on startup
     if server.workspace.root_uri:
         asyncio.create_task(scan_workspace(server.workspace.root_uri))
@@ -234,14 +256,18 @@ async def run_scan(uri: str, content: str) -> None:
                 )
                 diagnostics.extend(create_iac_diagnostics(iac_results, content))
 
+            # Filter out ignored vulnerabilities
+            filtered_diagnostics = _filter_ignored_diagnostics(uri, content, diagnostics)
+            ignored_count = len(diagnostics) - len(filtered_diagnostics)
+
             progress.report(lsp.WorkDoneProgressReport(
-                message=f"Found {len(diagnostics)} issues",
+                message=f"Found {len(filtered_diagnostics)} issues ({ignored_count} ignored)",
             ))
 
             # Store and publish diagnostics
-            server._diagnostics[uri] = diagnostics
-            server.publish_diagnostics(uri, diagnostics)
-            logger.info(f"Published {len(diagnostics)} diagnostics for {uri}")
+            server._diagnostics[uri] = filtered_diagnostics
+            server.publish_diagnostics(uri, filtered_diagnostics)
+            logger.info(f"Published {len(filtered_diagnostics)} diagnostics for {uri} ({ignored_count} ignored)")
 
             progress.end(lsp.WorkDoneProgressEnd(
                 message="Scan complete",
@@ -277,6 +303,52 @@ async def scan_workspace(root_uri: str) -> None:
                 await run_scan(uri, content)
             except Exception as e:
                 logger.warning(f"Could not scan {file_path}: {e}")
+
+
+def _filter_ignored_diagnostics(
+    uri: str,
+    content: str,
+    diagnostics: list[lsp.Diagnostic],
+) -> list[lsp.Diagnostic]:
+    """Filter out diagnostics that are ignored by config or inline comments."""
+    # Get file path from URI
+    file_path = uri.replace("file://", "")
+
+    # Determine file type for inline ignore parsing
+    if "requirements" in uri.lower() or uri.endswith(".txt"):
+        file_type = "requirements.txt"
+    elif uri.endswith(".tf"):
+        file_type = "terraform"
+    elif uri.endswith((".yaml", ".yml")):
+        file_type = "yaml"
+    elif uri.endswith(".json"):
+        file_type = "json"
+    else:
+        file_type = "requirements.txt"
+
+    # Parse inline ignores
+    inline_ignores = parse_inline_ignores(content, file_type)
+
+    filtered: list[lsp.Diagnostic] = []
+
+    for diagnostic in diagnostics:
+        vuln_id = str(diagnostic.code) if diagnostic.code else ""
+
+        # Check config-based ignore
+        is_ignored, reason = server._ignore_config.is_ignored(vuln_id, file_path)
+        if is_ignored:
+            logger.debug(f"Ignoring {vuln_id} via config: {reason}")
+            continue
+
+        # Check inline ignore
+        line_num = diagnostic.range.start.line
+        if line_num in inline_ignores and vuln_id in inline_ignores[line_num]:
+            logger.debug(f"Ignoring {vuln_id} via inline comment at line {line_num}")
+            continue
+
+        filtered.append(diagnostic)
+
+    return filtered
 
 
 @server.feature(lsp.TEXT_DOCUMENT_CODE_ACTION)
@@ -416,6 +488,141 @@ def _create_hover_content(diagnostic: lsp.Diagnostic) -> str | None:
         return None
 
     return "\n".join(lines)
+
+
+@server.command("security-lsp.ignoreInline")
+async def ignore_inline(args: list[Any]) -> dict[str, Any]:
+    """Add an inline ignore comment for a vulnerability."""
+    if len(args) < 3:
+        return {"success": False, "error": "Missing arguments"}
+
+    uri = args[0]
+    vuln_id = args[1]
+    line_num = int(args[2])
+
+    try:
+        doc = server.workspace.get_text_document(uri)
+        lines = doc.source.split("\n")
+
+        if line_num >= len(lines):
+            return {"success": False, "error": "Invalid line number"}
+
+        # Determine file type
+        if "requirements" in uri.lower() or uri.endswith(".txt"):
+            file_type = "requirements.txt"
+        elif uri.endswith(".tf"):
+            file_type = "terraform"
+        elif uri.endswith((".yaml", ".yml")):
+            file_type = "yaml"
+        elif uri.endswith(".json"):
+            file_type = "json"
+        else:
+            file_type = "requirements.txt"
+
+        # Create the new line with ignore comment
+        new_line = create_inline_ignore_comment(file_type, vuln_id, lines[line_num])
+
+        # Apply the edit
+        edit = lsp.WorkspaceEdit(
+            changes={
+                uri: [
+                    lsp.TextEdit(
+                        range=lsp.Range(
+                            start=lsp.Position(line=line_num, character=0),
+                            end=lsp.Position(line=line_num, character=len(lines[line_num])),
+                        ),
+                        new_text=new_line,
+                    )
+                ]
+            }
+        )
+
+        await server.apply_edit_async(edit)
+        logger.info(f"Added inline ignore for {vuln_id} at line {line_num} in {uri}")
+        return {"success": True}
+
+    except Exception as e:
+        logger.exception(f"Error adding inline ignore: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@server.command("security-lsp.ignoreConfig")
+async def ignore_config(args: list[Any]) -> dict[str, Any]:
+    """Add a vulnerability to the ignore config file."""
+    if len(args) < 2:
+        return {"success": False, "error": "Missing arguments"}
+
+    uri = args[0]
+    vuln_id = args[1]
+    reason = args[2] if len(args) > 2 else ""
+
+    try:
+        root_uri = server.workspace.root_uri
+        if not root_uri:
+            return {"success": False, "error": "No workspace root"}
+
+        root_path = Path(root_uri.replace("file://", ""))
+        config_path = root_path / ".security-use-ignore.yaml"
+
+        # Create entry
+        entry = create_ignore_config_entry(vuln_id, reason)
+
+        if config_path.exists():
+            # Append to existing file
+            content = config_path.read_text()
+            if "ignores:" not in content:
+                content = "ignores:\n" + content
+            new_content = content.rstrip() + "\n" + entry + "\n"
+        else:
+            # Create new file
+            new_content = f"# Security vulnerability ignore configuration\n# See: https://github.com/security-use/lsp-server\n\nignores:\n{entry}\n"
+
+        # Apply the edit via workspace edit
+        config_uri = f"file://{config_path}"
+        edit = lsp.WorkspaceEdit(
+            document_changes=[
+                lsp.CreateFile(uri=config_uri, options=lsp.CreateFileOptions(overwrite=True)),
+                lsp.TextDocumentEdit(
+                    text_document=lsp.OptionalVersionedTextDocumentIdentifier(
+                        uri=config_uri,
+                        version=None,
+                    ),
+                    edits=[
+                        lsp.TextEdit(
+                            range=lsp.Range(
+                                start=lsp.Position(line=0, character=0),
+                                end=lsp.Position(line=0, character=0),
+                            ),
+                            new_text=new_content,
+                        )
+                    ],
+                ),
+            ]
+        )
+
+        await server.apply_edit_async(edit)
+
+        # Reload ignore config
+        server.load_ignore_config()
+
+        logger.info(f"Added {vuln_id} to ignore config")
+        return {"success": True}
+
+    except Exception as e:
+        logger.exception(f"Error adding to ignore config: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@server.command("security-lsp.reloadIgnoreConfig")
+def reload_ignore_config(args: list[Any]) -> dict[str, Any]:
+    """Reload the ignore configuration."""
+    try:
+        server.load_ignore_config()
+        logger.info("Reloaded ignore configuration")
+        return {"success": True}
+    except Exception as e:
+        logger.exception(f"Error reloading ignore config: {e}")
+        return {"success": False, "error": str(e)}
 
 
 def main() -> None:
