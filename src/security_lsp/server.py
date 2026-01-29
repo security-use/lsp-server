@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from lsprotocol import types as lsp
-from pygls.server import LanguageServer
+from pygls.lsp.server import LanguageServer
 
 from security_lsp.diagnostics import (
     create_dependency_diagnostics,
