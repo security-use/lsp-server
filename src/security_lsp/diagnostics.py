@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from lsprotocol import types as lsp
 
@@ -244,6 +244,17 @@ def create_iac_diagnostics(
         # Create related information with links
         related_info = _create_iac_related_info(vuln)
 
+        # Build data dict with compliance frameworks if available
+        data_dict: dict[str, Any] = {
+            "type": "iac",
+            "rule_id": vuln.rule_id,
+            "resource_path": vuln.resource_path,
+            "resource_type": vuln.resource_type,
+            "fix_code": vuln.fix_code,
+        }
+        if hasattr(vuln, 'compliance_frameworks') and vuln.compliance_frameworks:
+            data_dict["compliance_frameworks"] = vuln.compliance_frameworks
+
         diagnostic = lsp.Diagnostic(
             range=lsp.Range(
                 start=lsp.Position(line=start_line, character=start_char),
@@ -257,13 +268,7 @@ def create_iac_diagnostics(
                 href=vuln.reference_url or f"https://www.checkov.io/5.Policy%20Index/{vuln.rule_id}.html"
             ) if vuln.rule_id else None,
             related_information=related_info if related_info else None,
-            data={
-                "type": "iac",
-                "rule_id": vuln.rule_id,
-                "resource_path": vuln.resource_path,
-                "resource_type": vuln.resource_type,
-                "fix_code": vuln.fix_code,
-            },
+            data=data_dict,
         )
 
         diagnostics.append(diagnostic)

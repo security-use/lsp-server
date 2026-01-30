@@ -43,6 +43,8 @@ class IaCVulnerability:
     line_number: int | None = None
     fix_code: str | None = None
     reference_url: str | None = None
+    # Compliance framework mappings (optional)
+    compliance_frameworks: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -145,6 +147,8 @@ class DependencyScanner:
 
     def __init__(self) -> None:
         self._security_use_available = False
+        self._scan_deps = None
+        self._get_fix = None
         try:
             from security_use import scan_dependencies as _scan_deps
             from security_use.scanner import get_vulnerability_fix as _get_fix
@@ -155,8 +159,6 @@ class DependencyScanner:
             logger.info("security-use package loaded successfully")
         except ImportError:
             logger.warning("security-use package not available, using stub scanner")
-            self._scan_deps = None
-            self._get_fix = None
 
     def _get_file_type(self, uri: str) -> str:
         """Determine file type from URI."""
@@ -249,11 +251,21 @@ class DependencyScanner:
 
         return vulnerabilities
 
-    def get_fix(self, vuln_id: str) -> dict[str, Any] | None:
-        """Get fix information for a vulnerability."""
-        if self._security_use_available and self._get_fix:
+    def get_fix(self, vuln_id: str, package_name: str | None = None) -> dict[str, Any] | None:
+        """Get fix information for a vulnerability.
+
+        Args:
+            vuln_id: Vulnerability ID (CVE or GHSA).
+            package_name: Package name (required by security-use API).
+
+        Returns:
+            Fix information dict or None.
+        """
+        if self._security_use_available and self._get_fix and package_name:
             try:
-                return self._get_fix(vuln_id)
+                fix_version = self._get_fix(vuln_id, package_name)
+                if fix_version:
+                    return {"fix_version": fix_version}
             except Exception as e:
                 logger.error(f"Error getting fix: {e}")
         return None
@@ -264,15 +276,27 @@ class IaCScanner:
 
     def __init__(self) -> None:
         self._security_use_available = False
+        self._compliance_available = False
+        self._scan_iac = None
+        self._compliance_mapper = None
         try:
             from security_use import scan_iac as _scan_iac
 
             self._scan_iac = _scan_iac
             self._security_use_available = True
             logger.info("security-use IaC scanner loaded successfully")
+
+            # Try to load compliance mapper
+            try:
+                from security_use.compliance import ComplianceMapper
+
+                self._compliance_mapper = ComplianceMapper()
+                self._compliance_available = True
+                logger.info("Compliance mapping loaded successfully")
+            except ImportError:
+                logger.debug("Compliance mapping not available")
         except ImportError:
             logger.warning("security-use IaC scanner not available, using stub scanner")
-            self._scan_iac = None
 
     def _get_file_type(self, uri: str) -> str:
         """Determine file type from URI."""
@@ -291,21 +315,37 @@ class IaCScanner:
             try:
                 file_type = self._get_file_type(uri)
                 result = self._scan_iac(file_content=content, file_type=file_type)
-                return [
-                    IaCVulnerability(
-                        rule_id=f.rule_id,
-                        title=f.title,
-                        severity=f.severity.value if hasattr(f.severity, 'value') else str(f.severity),
-                        resource_type=f.resource_type,
-                        resource_path=f"{f.resource_type}.{f.resource_name}",
-                        description=f.description,
-                        remediation=f.remediation,
-                        line_number=f.line_number,
-                        fix_code=f.fix_code,
-                        reference_url=None,
+                vulnerabilities = []
+                for f in result.iac_findings:
+                    # Get compliance frameworks if available
+                    compliance_frameworks: list[str] = []
+                    if self._compliance_available and self._compliance_mapper:
+                        try:
+                            mapping = self._compliance_mapper.get_mapping(f.rule_id)
+                            if mapping and mapping.frameworks:
+                                compliance_frameworks = [
+                                    fw.value if hasattr(fw, 'value') else str(fw)
+                                    for fw in mapping.frameworks
+                                ]
+                        except Exception as e:
+                            logger.debug(f"Could not get compliance mapping: {e}")
+
+                    vulnerabilities.append(
+                        IaCVulnerability(
+                            rule_id=f.rule_id,
+                            title=f.title,
+                            severity=f.severity.value if hasattr(f.severity, 'value') else str(f.severity),
+                            resource_type=f.resource_type,
+                            resource_path=f"{f.resource_type}.{f.resource_name}",
+                            description=f.description,
+                            remediation=f.remediation,
+                            line_number=f.line_number,
+                            fix_code=f.fix_code,
+                            reference_url=None,
+                            compliance_frameworks=compliance_frameworks,
+                        )
                     )
-                    for f in result.iac_findings
-                ]
+                return vulnerabilities
             except Exception as e:
                 logger.error(f"Error scanning IaC: {e}")
 
@@ -408,12 +448,13 @@ class IaCScanner:
         return vulnerabilities
 
     def get_fix(self, rule_id: str) -> dict[str, Any] | None:
-        """Get fix information for an IaC rule."""
-        if self._security_use_available and self._get_iac_fix:
-            try:
-                return self._get_iac_fix(rule_id)
-            except Exception as e:
-                logger.error(f"Error getting IaC fix: {e}")
+        """Get fix information for an IaC rule.
+
+        Note: IaC fixes are typically embedded in the scan results (fix_code field).
+        This method is a placeholder for future API support.
+        """
+        # IaC fixes are returned inline with findings (fix_code field)
+        # No separate API call needed currently
         return None
 
 

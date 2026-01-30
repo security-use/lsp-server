@@ -555,6 +555,7 @@ def _create_hover_content(diagnostic: lsp.Diagnostic) -> str | None:
         resource_type = data.get("resource_type", "Unknown")
         resource_path = data.get("resource_path", "")
         fix_code = data.get("fix_code")
+        compliance_frameworks = data.get("compliance_frameworks", [])
 
         # Get severity from diagnostic
         severity_map = {
@@ -572,6 +573,11 @@ def _create_hover_content(diagnostic: lsp.Diagnostic) -> str | None:
         if resource_path:
             lines.append(f"**Path:** {resource_path}")
         lines.append("")
+
+        # Show compliance frameworks if available
+        if compliance_frameworks:
+            lines.append(f"**Compliance:** {', '.join(compliance_frameworks)}")
+            lines.append("")
 
         if fix_code:
             lines.append("**Suggested fix:**")
