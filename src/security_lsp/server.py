@@ -6,29 +6,28 @@ import asyncio
 import logging
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from lsprotocol import types as lsp
 from pygls.lsp.server import LanguageServer
 
+from security_lsp.code_actions import create_code_actions
 from security_lsp.diagnostics import (
     create_dependency_diagnostics,
     create_iac_diagnostics,
 )
-from security_lsp.code_actions import create_code_actions
-from security_lsp.scanner import SecurityScanner
 from security_lsp.ignore import (
     IgnoreConfig,
+    create_ignore_config_entry,
+    create_inline_ignore_comment,
     load_ignore_config,
     parse_inline_ignores,
-    create_inline_ignore_comment,
-    create_ignore_config_entry,
 )
+from security_lsp.scanner import SecurityScanner
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    pass
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -277,9 +276,8 @@ async def run_scan(uri: str, content: str) -> None:
             # Store and publish diagnostics
             server._diagnostics[uri] = filtered_diagnostics
             server.publish_diagnostics(uri, filtered_diagnostics)
-            logger.info(
-                f"Published {len(filtered_diagnostics)} diagnostics for {uri} ({ignored_count} ignored)"
-            )
+            msg = f"Published {len(filtered_diagnostics)} diagnostics ({ignored_count} ignored)"
+            logger.info(f"{msg} for {uri}")
 
             progress.end(
                 lsp.WorkDoneProgressEnd(
@@ -591,7 +589,7 @@ def _create_hover_content(diagnostic: lsp.Diagnostic) -> str | None:
 
         if fix_code:
             lines.append("**Suggested fix:**")
-            lines.append(f"```")
+            lines.append("```")
             lines.append(fix_code)
             lines.append("```")
             lines.append("")
@@ -670,7 +668,7 @@ async def ignore_config(args: list[Any]) -> dict[str, Any]:
     if len(args) < 2:
         return {"success": False, "error": "Missing arguments"}
 
-    uri = args[0]
+    _uri = args[0]  # Reserved for future use (file-specific ignores)
     vuln_id = args[1]
     reason = args[2] if len(args) > 2 else ""
 

@@ -7,7 +7,6 @@ import re
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
