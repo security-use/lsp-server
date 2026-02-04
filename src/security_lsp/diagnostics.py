@@ -44,7 +44,7 @@ def find_package_position(content: str, package_name: str) -> tuple[int, int, in
             rf'\b{re.escape(package_lower)}[=<>!\[\]@~\s,"\']',  # package with version spec
             rf'"{re.escape(package_lower)}"',  # quoted package name
             rf"'{re.escape(package_lower)}'",  # single quoted
-            rf'^{re.escape(package_lower)}$',  # exact match
+            rf"^{re.escape(package_lower)}$",  # exact match
         ]
 
         for pattern in patterns:
@@ -59,7 +59,9 @@ def find_package_position(content: str, package_name: str) -> tuple[int, int, in
     return (0, 0, 0, len(lines[0]) if lines else 0)
 
 
-def find_iac_position(content: str, resource_path: str, line_hint: int | None = None) -> tuple[int, int, int, int]:
+def find_iac_position(
+    content: str, resource_path: str, line_hint: int | None = None
+) -> tuple[int, int, int, int]:
     """Find the position of an IaC resource in the content.
 
     Returns (start_line, start_char, end_line, end_char).
@@ -133,7 +135,9 @@ def create_dependency_diagnostics(
             code=vuln.cve_id or vuln.vulnerability_id,
             code_description=lsp.CodeDescription(
                 href=vuln.reference_url or f"https://osv.dev/vulnerability/{vuln.vulnerability_id}"
-            ) if vuln.cve_id or vuln.vulnerability_id else None,
+            )
+            if vuln.cve_id or vuln.vulnerability_id
+            else None,
             tags=[lsp.DiagnosticTag.Deprecated] if vuln.severity.upper() == "CRITICAL" else None,
             related_information=related_info if related_info else None,
             data={
@@ -252,7 +256,7 @@ def create_iac_diagnostics(
             "resource_type": vuln.resource_type,
             "fix_code": vuln.fix_code,
         }
-        if hasattr(vuln, 'compliance_frameworks') and vuln.compliance_frameworks:
+        if hasattr(vuln, "compliance_frameworks") and vuln.compliance_frameworks:
             data_dict["compliance_frameworks"] = vuln.compliance_frameworks
 
         diagnostic = lsp.Diagnostic(
@@ -265,8 +269,11 @@ def create_iac_diagnostics(
             source="security-lsp",
             code=vuln.rule_id,
             code_description=lsp.CodeDescription(
-                href=vuln.reference_url or f"https://www.checkov.io/5.Policy%20Index/{vuln.rule_id}.html"
-            ) if vuln.rule_id else None,
+                href=vuln.reference_url
+                or f"https://www.checkov.io/5.Policy%20Index/{vuln.rule_id}.html"
+            )
+            if vuln.rule_id
+            else None,
             related_information=related_info if related_info else None,
             data=data_dict,
         )

@@ -226,7 +226,9 @@ def create_inline_ignore_comment(
         return f"{existing_line}  # security-use: ignore {vuln_id}"
 
 
-def create_ignore_config_entry(vuln_id: str, reason: str = "", paths: list[str] | None = None) -> str:
+def create_ignore_config_entry(
+    vuln_id: str, reason: str = "", paths: list[str] | None = None
+) -> str:
     """Create a YAML entry for the ignore config file."""
     lines = [f"  - id: {vuln_id}"]
     if reason:

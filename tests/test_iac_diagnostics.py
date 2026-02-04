@@ -13,12 +13,12 @@ class TestIaCScanner:
     def test_scan_terraform_returns_list(self):
         """Test that scanning Terraform files returns a list."""
         scanner = IaCScanner()
-        content = '''
+        content = """
 resource "aws_s3_bucket" "example" {
   bucket = "my-bucket"
   acl    = "public-read"
 }
-'''
+"""
         results = scanner.scan("file:///test.tf", content)
         assert isinstance(results, list)
 
@@ -28,19 +28,16 @@ resource "aws_s3_bucket" "example" {
         # Force use of stub scanner
         scanner._security_use_available = False
 
-        content = '''
+        content = """
 resource "aws_s3_bucket" "example" {
   bucket = "my-bucket"
   acl    = "public-read"
 }
-'''
+"""
         results = scanner.scan("file:///test.tf", content)
 
         assert len(results) >= 1
-        public_acl_vuln = next(
-            (v for v in results if v.rule_id == "CKV_AWS_19"),
-            None
-        )
+        public_acl_vuln = next((v for v in results if v.rule_id == "CKV_AWS_19"), None)
         assert public_acl_vuln is not None
         assert public_acl_vuln.severity == "HIGH"
 
@@ -50,17 +47,17 @@ resource "aws_s3_bucket" "example" {
         # Force use of stub scanner
         scanner._security_use_available = False
 
-        content = '''
+        content = """
 resource "aws_db_instance" "example" {
   identifier = "mydb"
   password   = "supersecretpassword123"
 }
-'''
+"""
         results = scanner.scan("file:///test.tf", content)
 
         secret_vuln = next(
             (v for v in results if "secret" in v.rule_id.lower() or "secret" in v.title.lower()),
-            None
+            None,
         )
         assert secret_vuln is not None
         assert secret_vuln.severity == "CRITICAL"
@@ -76,14 +73,14 @@ resource "aws_db_instance" "example" {
     def test_scan_cloudformation_returns_list(self):
         """Test that scanning CloudFormation files returns a list."""
         scanner = IaCScanner()
-        content = '''
+        content = """
 Resources:
   MyBucket:
     Type: AWS::S3::Bucket
     Properties:
       PublicAccessBlockConfiguration:
         BlockPublicAcls: false
-'''
+"""
         results = scanner.scan("file:///template.yaml", content)
         assert isinstance(results, list)
 
@@ -118,10 +115,10 @@ class TestIaCDiagnostics:
                 line_number=3,
             )
         ]
-        content = '''resource "aws_s3_bucket" "example" {
+        content = """resource "aws_s3_bucket" "example" {
   bucket = "my-bucket"
   acl    = "public-read"
-}'''
+}"""
 
         diagnostics = create_iac_diagnostics(vulnerabilities, content)
 

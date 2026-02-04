@@ -30,7 +30,9 @@ from security_lsp.ignore import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 DEPENDENCY_FILES = {
@@ -230,11 +232,13 @@ async def run_scan(uri: str, content: str) -> None:
                 token=f"scan-{uri}",
             )
         ) as progress:
-            progress.begin(lsp.WorkDoneProgressBegin(
-                title="Security Scan",
-                message=f"Scanning {Path(uri).name}...",
-                cancellable=False,
-            ))
+            progress.begin(
+                lsp.WorkDoneProgressBegin(
+                    title="Security Scan",
+                    message=f"Scanning {Path(uri).name}...",
+                    cancellable=False,
+                )
+            )
 
             diagnostics: list[lsp.Diagnostic] = []
 
@@ -264,18 +268,24 @@ async def run_scan(uri: str, content: str) -> None:
             filtered_diagnostics = _filter_ignored_diagnostics(uri, content, diagnostics)
             ignored_count = len(diagnostics) - len(filtered_diagnostics)
 
-            progress.report(lsp.WorkDoneProgressReport(
-                message=f"Found {len(filtered_diagnostics)} issues ({ignored_count} ignored)",
-            ))
+            progress.report(
+                lsp.WorkDoneProgressReport(
+                    message=f"Found {len(filtered_diagnostics)} issues ({ignored_count} ignored)",
+                )
+            )
 
             # Store and publish diagnostics
             server._diagnostics[uri] = filtered_diagnostics
             server.publish_diagnostics(uri, filtered_diagnostics)
-            logger.info(f"Published {len(filtered_diagnostics)} diagnostics for {uri} ({ignored_count} ignored)")
+            logger.info(
+                f"Published {len(filtered_diagnostics)} diagnostics for {uri} ({ignored_count} ignored)"
+            )
 
-            progress.end(lsp.WorkDoneProgressEnd(
-                message="Scan complete",
-            ))
+            progress.end(
+                lsp.WorkDoneProgressEnd(
+                    message="Scan complete",
+                )
+            )
 
     except Exception as e:
         logger.exception(f"Error scanning {uri}: {e}")
@@ -588,7 +598,9 @@ def _create_hover_content(diagnostic: lsp.Diagnostic) -> str | None:
 
         # Add link to documentation
         if rule_id.startswith("CKV_"):
-            lines.append(f"[View on Checkov](https://www.checkov.io/5.Policy%20Index/{rule_id}.html)")
+            lines.append(
+                f"[View on Checkov](https://www.checkov.io/5.Policy%20Index/{rule_id}.html)"
+            )
 
     else:
         return None

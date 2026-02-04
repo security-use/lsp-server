@@ -424,9 +424,7 @@ class TestCodeLens:
             ),
         ]
 
-        params = lsp.CodeLensParams(
-            text_document=lsp.TextDocumentIdentifier(uri=test_uri)
-        )
+        params = lsp.CodeLensParams(text_document=lsp.TextDocumentIdentifier(uri=test_uri))
         lenses = code_lens(params)
 
         assert len(lenses) >= 2
@@ -444,9 +442,7 @@ class TestCodeLens:
         test_uri = "file:///test/requirements.txt"
         server._diagnostics[test_uri] = []
 
-        params = lsp.CodeLensParams(
-            text_document=lsp.TextDocumentIdentifier(uri=test_uri)
-        )
+        params = lsp.CodeLensParams(text_document=lsp.TextDocumentIdentifier(uri=test_uri))
         lenses = code_lens(params)
 
         assert len(lenses) >= 1
@@ -462,9 +458,7 @@ class TestCodeLens:
         test_uri = "file:///test/requirements.txt"
         server._diagnostics[test_uri] = []
 
-        params = lsp.CodeLensParams(
-            text_document=lsp.TextDocumentIdentifier(uri=test_uri)
-        )
+        params = lsp.CodeLensParams(text_document=lsp.TextDocumentIdentifier(uri=test_uri))
         lenses = code_lens(params)
 
         scan_lens = [l for l in lenses if "Scan now" in l.command.title]

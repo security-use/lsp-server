@@ -186,11 +186,11 @@ class TestIaCScanner:
     def test_scan_iac_caching(self):
         """Test that IaC scans are cached."""
         scanner = SecurityScanner()
-        content = '''
+        content = """
 resource "aws_s3_bucket" "example" {
   acl = "public-read"
 }
-'''
+"""
         # First scan
         results1 = scanner.scan_iac("file:///main.tf", content)
 
@@ -213,10 +213,7 @@ class TestBackgroundExecution:
 
         def scan_task(content: str, index: int):
             try:
-                result = scanner.scan_dependencies(
-                    f"file:///requirements{index}.txt",
-                    content
-                )
+                result = scanner.scan_dependencies(f"file:///requirements{index}.txt", content)
                 results.append((index, result))
             except Exception as e:
                 errors.append((index, e))
