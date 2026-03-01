@@ -6,32 +6,31 @@ import asyncio
 import logging
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from lsprotocol import types as lsp
 from pygls.lsp.server import LanguageServer
 
-from security_lsp.code_actions import create_code_actions
 from security_lsp.diagnostics import (
     create_dependency_diagnostics,
     create_iac_diagnostics,
 )
+from security_lsp.code_actions import create_code_actions
+from security_lsp.scanner import SecurityScanner
 from security_lsp.ignore import (
     IgnoreConfig,
-    create_ignore_config_entry,
-    create_inline_ignore_comment,
     load_ignore_config,
     parse_inline_ignores,
+    create_inline_ignore_comment,
+    create_ignore_config_entry,
 )
-from security_lsp.scanner import SecurityScanner
 
 if TYPE_CHECKING:
-    pass
+    from collections.abc import Sequence
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 DEPENDENCY_FILES = {
@@ -231,13 +230,11 @@ async def run_scan(uri: str, content: str) -> None:
                 token=f"scan-{uri}",
             )
         ) as progress:
-            progress.begin(
-                lsp.WorkDoneProgressBegin(
-                    title="Security Scan",
-                    message=f"Scanning {Path(uri).name}...",
-                    cancellable=False,
-                )
-            )
+            progress.begin(lsp.WorkDoneProgressBegin(
+                title="Security Scan",
+                message=f"Scanning {Path(uri).name}...",
+                cancellable=False,
+            ))
 
             diagnostics: list[lsp.Diagnostic] = []
 
@@ -267,23 +264,18 @@ async def run_scan(uri: str, content: str) -> None:
             filtered_diagnostics = _filter_ignored_diagnostics(uri, content, diagnostics)
             ignored_count = len(diagnostics) - len(filtered_diagnostics)
 
-            progress.report(
-                lsp.WorkDoneProgressReport(
-                    message=f"Found {len(filtered_diagnostics)} issues ({ignored_count} ignored)",
-                )
-            )
+            progress.report(lsp.WorkDoneProgressReport(
+                message=f"Found {len(filtered_diagnostics)} issues ({ignored_count} ignored)",
+            ))
 
             # Store and publish diagnostics
             server._diagnostics[uri] = filtered_diagnostics
             server.publish_diagnostics(uri, filtered_diagnostics)
-            msg = f"Published {len(filtered_diagnostics)} diagnostics ({ignored_count} ignored)"
-            logger.info(f"{msg} for {uri}")
+            logger.info(f"Published {len(filtered_diagnostics)} diagnostics for {uri} ({ignored_count} ignored)")
 
-            progress.end(
-                lsp.WorkDoneProgressEnd(
-                    message="Scan complete",
-                )
-            )
+            progress.end(lsp.WorkDoneProgressEnd(
+                message="Scan complete",
+            ))
 
     except Exception as e:
         logger.exception(f"Error scanning {uri}: {e}")
@@ -589,16 +581,14 @@ def _create_hover_content(diagnostic: lsp.Diagnostic) -> str | None:
 
         if fix_code:
             lines.append("**Suggested fix:**")
-            lines.append("```")
+            lines.append(f"```")
             lines.append(fix_code)
             lines.append("```")
             lines.append("")
 
         # Add link to documentation
         if rule_id.startswith("CKV_"):
-            lines.append(
-                f"[View on Checkov](https://www.checkov.io/5.Policy%20Index/{rule_id}.html)"
-            )
+            lines.append(f"[View on Checkov](https://www.checkov.io/5.Policy%20Index/{rule_id}.html)")
 
     else:
         return None
@@ -668,7 +658,7 @@ async def ignore_config(args: list[Any]) -> dict[str, Any]:
     if len(args) < 2:
         return {"success": False, "error": "Missing arguments"}
 
-    _uri = args[0]  # Reserved for future use (file-specific ignores)
+    uri = args[0]
     vuln_id = args[1]
     reason = args[2] if len(args) > 2 else ""
 

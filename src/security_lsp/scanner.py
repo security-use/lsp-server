@@ -6,6 +6,7 @@ import hashlib
 import logging
 import time
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -130,7 +131,9 @@ class SecurityScanner:
         self._set_cached(cache_key, results)
         return results
 
-    def get_fix_for_vulnerability(self, vuln_id: str, vuln_type: str) -> dict[str, Any] | None:
+    def get_fix_for_vulnerability(
+        self, vuln_id: str, vuln_type: str
+    ) -> dict[str, Any] | None:
         """Get fix information for a vulnerability."""
         if vuln_type == "dependency":
             return self.dependency_scanner.get_fix(vuln_id)
@@ -197,9 +200,7 @@ class DependencyScanner:
                         vulnerability_id=v.id,
                         package_name=v.package,
                         installed_version=v.installed_version,
-                        severity=v.severity.value
-                        if hasattr(v.severity, "value")
-                        else str(v.severity),
+                        severity=v.severity.value if hasattr(v.severity, 'value') else str(v.severity),
                         description=v.description,
                         cve_id=v.id if v.id.startswith("CVE-") else None,
                         fix_version=v.fixed_version,
@@ -323,7 +324,7 @@ class IaCScanner:
                             mapping = self._compliance_mapper.get_mapping(f.rule_id)
                             if mapping and mapping.frameworks:
                                 compliance_frameworks = [
-                                    fw.value if hasattr(fw, "value") else str(fw)
+                                    fw.value if hasattr(fw, 'value') else str(fw)
                                     for fw in mapping.frameworks
                                 ]
                         except Exception as e:
@@ -333,9 +334,7 @@ class IaCScanner:
                         IaCVulnerability(
                             rule_id=f.rule_id,
                             title=f.title,
-                            severity=f.severity.value
-                            if hasattr(f.severity, "value")
-                            else str(f.severity),
+                            severity=f.severity.value if hasattr(f.severity, 'value') else str(f.severity),
                             resource_type=f.resource_type,
                             resource_path=f"{f.resource_type}.{f.resource_name}",
                             description=f.description,
